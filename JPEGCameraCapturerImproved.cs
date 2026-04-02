@@ -36,8 +36,8 @@ public class JPEGCameraCapturerImproved : MonoBehaviour
     public Camera cameraSource;
 
     [Header("Image settings")]
-    [Min(16)] public int resWidth  = 360;
-    [Min(16)] public int resHeight = 240;
+    [Min(16)] public int resWidth  = 1280;
+    [Min(16)] public int resHeight = 720;
 
     [Range(1, 100)]
     [Tooltip("JPEG quality (1..100). Higher = better quality, larger payload.")]
