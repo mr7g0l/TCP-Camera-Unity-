@@ -1,0 +1,524 @@
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{fancyhdr}
+\usepackage{parskip}
+\usepackage{lmodern}
+\usepackage{array}
+
+% ── Page style ───────────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{TCP Camera System -- Unity \& Python}
+\lhead{\leftmark}
+\rfoot{\thepage}
+
+% ── Code listing style ───────────────────────────────────────────────────────
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{keyword}{RGB}{0,0,200}
+\definecolor{comment}{RGB}{80,120,80}
+\definecolor{string}{RGB}{160,32,32}
+
+\lstdefinestyle{csharp}{
+    language=[Sharp]C,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{keyword}\bfseries,
+    commentstyle=\color{comment}\itshape,
+    stringstyle=\color{string},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=8pt,
+    tabsize=4,
+    breaklines=true,
+    showstringspaces=false,
+    captionpos=b
+}
+
+\lstdefinestyle{python}{
+    language=Python,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{keyword}\bfseries,
+    commentstyle=\color{comment}\itshape,
+    stringstyle=\color{string},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=8pt,
+    tabsize=4,
+    breaklines=true,
+    showstringspaces=false,
+    captionpos=b
+}
+
+% ── Color boxes for UDP/TCP comparison ───────────────────────────────────────
+\definecolor{udpcolor}{RGB}{220,240,255}
+\definecolor{tcpcolor}{RGB}{220,255,220}
+
+% ── Title ────────────────────────────────────────────────────────────────────
+\title{
+    \vspace{-1cm}
+    \Large\textbf{TCP-Based JPEG Capture in Unity for Remote Control}\\[0.5em]
+    \large Laboratory Report -- TCP Version
+}
+\author{Miguel Rodriguez}
+\date{April 2, 2026}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\begin{abstract}
+This report presents a TCP-based evolution of the UDP JPEG streaming system developed
+in a previous laboratory session. The system captures JPEG frames from a Unity camera
+and streams them to a Python client over a persistent TCP connection, supporting
+high-resolution images (1280$\times$720), WASD-based remote camera control, and
+multi-client operation over a Local Area Network (LAN). A comparative analysis of UDP
+and TCP is included, discussing the trade-offs between simplicity, reliability,
+and latency for real-time image streaming applications.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{Project Objective}
+
+This project extends the UDP snapshot system by replacing the transport layer with TCP,
+addressing the key limitations of UDP for image streaming:
+
+\begin{itemize}
+    \item \textbf{No datagram size limit:} UDP is restricted to $\approx$65\,KB per
+          datagram. TCP is stream-based and imposes no message-size limit, enabling
+          high-resolution JPEG frames (1280$\times$720 at quality 70 produces frames
+          well within practical limits but scalable beyond 65\,KB).
+    \item \textbf{Guaranteed delivery:} TCP ensures every byte arrives in order,
+          eliminating silent frame loss present in UDP on real networks.
+    \item \textbf{Persistent connection:} the client connects once and maintains the
+          session, reducing per-request overhead.
+\end{itemize}
+
+The request string format remains identical to the UDP version:
+\begin{center}
+\texttt{w=1280;h=720;q=70;fps=10;move=S}
+\end{center}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{UDP vs.\ TCP -- Comparative Analysis}
+
+\subsection{Protocol Overview}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{3.5cm} X X}
+\toprule
+\textbf{Property} & \textbf{UDP} & \textbf{TCP} \\
+\midrule
+Connection model  & Connectionless (stateless) & Connection-oriented (stateful) \\
+Delivery guarantee & None -- packets may be lost & Guaranteed -- retransmission on loss \\
+Ordering          & Not guaranteed & Guaranteed in-order delivery \\
+Message framing   & Built-in (datagrams) & Manual -- requires length prefix \\
+Max payload       & $\approx$65\,KB per datagram & Unlimited (stream) \\
+Latency           & Lower (no handshake, no ACK) & Higher (handshake + ACK overhead) \\
+Fragmentation risk & Yes -- lost fragment = lost frame & None -- OS handles reassembly \\
+Multi-client      & All share one socket & One socket per client \\
+Reconnection      & Automatic (stateless) & Must re-establish TCP handshake \\
+Implementation complexity & Low & Medium \\
+\bottomrule
+\end{tabularx}
+\caption{Side-by-side comparison of UDP and TCP properties.}
+\end{table}
+
+\subsection{Strengths and Weaknesses}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{2cm} X X}
+\toprule
+ & \textbf{UDP} & \textbf{TCP} \\
+\midrule
+\textbf{Strengths}
+& \vspace{-0.4cm}\begin{itemize}
+    \item Minimal latency
+    \item Simple implementation
+    \item No connection overhead
+    \item Ideal for localhost tests
+  \end{itemize}
+& \vspace{-0.4cm}\begin{itemize}
+    \item No frame loss
+    \item No size limit (HD+ images)
+    \item Supports multiple clients
+    \item Auto-reconnect in client
+  \end{itemize} \\
+\textbf{Weaknesses}
+& \vspace{-0.4cm}\begin{itemize}
+    \item 65\,KB payload limit
+    \item Silent frame loss on LAN
+    \item IP fragmentation risk
+    \item No delivery confirmation
+  \end{itemize}
+& \vspace{-0.4cm}\begin{itemize}
+    \item Higher latency (ACK/retransmit)
+    \item Requires message framing
+    \item Connection management needed
+    \item Head-of-line blocking
+  \end{itemize} \\
+\textbf{Best use}
+& Low-latency, loss-tolerant streaming (e.g.\ game telemetry, sensor feeds)
+& Reliable image delivery, high-resolution frames, production LAN systems \\
+\bottomrule
+\end{tabularx}
+\caption{Strengths and weaknesses of UDP vs.\ TCP for JPEG streaming.}
+\end{table}
+
+\subsection{Why TCP for This Project}
+
+Given that the system transmits full JPEG frames at 1280$\times$720 resolution, TCP is
+the more appropriate choice: a single lost IP fragment in UDP silently discards the
+entire frame with no indication to the application. TCP's retransmission mechanism
+prevents this at the cost of slightly higher latency, which is acceptable for a
+10\,FPS control stream.
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{System Architecture}
+
+\subsection{Message Framing Protocol}
+
+Unlike UDP (where each \texttt{Send()} call produces exactly one datagram), TCP is a
+byte stream with no built-in message boundaries. A 4-byte big-endian length prefix is
+prepended to every message in both directions:
+
+\begin{center}
+\texttt{[ 4 bytes: length (big-endian) ][ N bytes: payload ]}
+\end{center}
+
+\begin{description}
+    \item[Request (client $\to$ server)] UTF-8 string, e.g.\ \texttt{w=1280;h=720;q=70;fps=10;move=S}
+    \item[Response (server $\to$ client)] Raw JPEG bytes. Length\,=\,0 means no frame
+    available yet.
+\end{description}
+
+\subsection{Communication Flow}
+
+\begin{figure}[H]
+\centering
+\begin{verbatim}
+  Python Client (Ubuntu)              Unity Server (Windows 11)
+  ──────────────────────              ─────────────────────────────────────
+  sock.connect(10.50.33.6:5000)  →   TcpListener.AcceptTcpClientAsync()
+                                          spawns HandleClient(Task)
+
+  Loop:
+    send_framed(request_string)   →   ReadExactAsync(4 bytes) → parse length
+                                      ReadExactAsync(N bytes) → parse params
+                                      ParseAndStoreParams()
+                                        lock(_paramLock) → FrameProducerLoop
+                                        lock(_moveLock)  → Update()
+    recv_framed()                 ←   WriteAsync(4 bytes length + JPEG)
+    np.frombuffer + cv2.imdecode
+    cv2.imshow()
+\end{verbatim}
+\caption{TCP communication flow between client and server.}
+\end{figure}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{Unity Server -- TcpJpegSnapshotServer.cs}
+
+\subsection{TCP Listener and Multi-Client Support}
+
+\begin{lstlisting}[style=csharp, caption={Starting the TCP listener bound to all interfaces.}]
+private void StartTcpServer()
+{
+    _cts      = new CancellationTokenSource();
+    _listener = new TcpListener(IPAddress.Any, listenPort);
+    _listener.Start();
+    _ = Task.Run(() => AcceptLoop(_cts.Token));
+}
+
+private async Task AcceptLoop(CancellationToken token)
+{
+    while (!token.IsCancellationRequested)
+    {
+        TcpClient client = await _listener.AcceptTcpClientAsync();
+        // Each client runs in its own Task -- supports simultaneous connections
+        _ = Task.Run(() => HandleClient(client, token));
+    }
+}
+\end{lstlisting}
+
+\subsection{Framed Read/Write}
+
+\begin{lstlisting}[style=csharp, caption={Reading a length-prefixed message from the TCP stream.}]
+// Read exactly 'count' bytes -- TCP may deliver them in multiple chunks
+private async Task<int> ReadExactAsync(NetworkStream stream,
+                                        byte[] buf, int count,
+                                        CancellationToken token)
+{
+    int total = 0;
+    while (total < count)
+    {
+        int n = await stream.ReadAsync(buf, total, count - total, token);
+        if (n == 0) break; // connection closed
+        total += n;
+    }
+    return total;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=csharp, caption={Sending the JPEG response with length prefix.}]
+byte[] lenOut = BitConverter.GetBytes(
+                    IPAddress.HostToNetworkOrder(jpg.Length));
+await stream.WriteAsync(lenOut, 0, 4, token);   // 4-byte header
+await stream.WriteAsync(jpg,    0, jpg.Length, token); // JPEG payload
+\end{lstlisting}
+
+\subsection{WASD Movement}
+
+The movement command is consumed and reset every \texttt{Update()} frame, so the
+object only moves while the client actively sends a direction key:
+
+\begin{lstlisting}[style=csharp, caption={Movement applied and reset on the Unity main thread.}]
+private void Update()
+{
+    string move;
+    lock (_moveLock) { move = _currentMove; _currentMove = "0"; }
+    Vector3 dir = Vector3.zero;
+    switch (move)
+    {
+        case "W": dir =  transform.forward; break;
+        case "S": dir = -transform.forward; break;
+        case "A": dir = -transform.right;   break;
+        case "D": dir =  transform.right;   break;
+    }
+    transform.position += dir * moveSpeed * Time.deltaTime;
+}
+\end{lstlisting}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{Python Client -- tcp\_client\_viewer.py}
+
+\subsection{Framing Helpers}
+
+\begin{lstlisting}[style=python, caption={Send and receive framed messages over TCP.}]
+def send_framed(sock, data: bytes):
+    header = struct.pack(">I", len(data))   # 4-byte big-endian length
+    sock.sendall(header + data)
+
+def recv_exact(sock, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("Connection closed by server.")
+        buf += chunk
+    return buf
+
+def recv_framed(sock) -> bytes:
+    length = struct.unpack(">I", recv_exact(sock, 4))[0]
+    return recv_exact(sock, length) if length > 0 else b""
+\end{lstlisting}
+
+\subsection{Auto-Reconnect}
+
+Unlike the UDP client, the TCP client detects disconnection and automatically
+reconnects without restarting the script:
+
+\begin{lstlisting}[style=python, caption={Outer reconnect loop wrapping the streaming loop.}]
+while True:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect((args.ip, args.port))
+    except (ConnectionRefusedError, socket.timeout):
+        time.sleep(2)
+        continue
+
+    try:
+        while True:          # streaming loop
+            send_framed(sock, payload)
+            data = recv_framed(sock)
+            # decode + display ...
+    except (ConnectionError, OSError):
+        time.sleep(2)        # reconnect on any network error
+    finally:
+        sock.close()
+\end{lstlisting}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{Simulation Results}
+
+The system was tested in a two-machine LAN scenario:
+\textbf{Unity server} on Windows\,11 at \texttt{10.50.33.6},
+\textbf{Python client} on Ubuntu (Lenovo ThinkPad) at \texttt{10.50.33.4}.
+Resolution was set to 1280$\times$720 with JPEG quality 70 at 10\,FPS.
+
+\subsection{LAN Setup}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\textwidth]{lab_setup_tcp.png}
+    \caption{Physical laboratory setup. \textbf{Left:} Lenovo ThinkPad running Ubuntu
+             (Python TCP client) showing the snapshot window and terminal.
+             \textbf{Right:} Desktop PC running Windows\,11 with Unity\,6 in Play mode
+             (TCP server) displaying the Game view and Console logs.
+             Both machines share the \texttt{central.local} Wi-Fi network.}
+    \label{fig:lab_setup}
+\end{figure}
+
+\subsection{Server -- Console and Network Configuration}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\textwidth]{server_console_tcp.png}
+    \caption{Unity Console and PowerShell \texttt{ipconfig} running simultaneously.
+             The Console logs show repeated TCP requests from \texttt{10.50.33.4}
+             (Ubuntu client) with the full parametric string
+             \texttt{w=1280;h=720;q=70;fps=10;move=S}.
+             The PowerShell window confirms the server's LAN IP (\texttt{10.50.33.6})
+             and the active Wi-Fi adapter (\texttt{central.local}).}
+    \label{fig:server_console}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\textwidth]{server_inspector_tcp.png}
+    \caption{Unity Inspector showing the \texttt{JPEG Camera Capturer Improved}
+             component configured at 1280$\times$720, quality 70. The Console
+             confirms a client disconnection event from \texttt{10.50.33.4:41552}
+             and the Game view shows the cube displaced by the \texttt{move=S}
+             command received from the client.}
+    \label{fig:server_inspector}
+\end{figure}
+
+\subsection{Client -- Snapshot Window and Terminal}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{client_snapshot_tcp.png}
+    \caption{Python TCP client (Ubuntu, Lenovo ThinkPad) displaying the Unity
+             JPEG snapshot at 1280$\times$720 resolution. The overlay shows:
+             frame size 24\,206 bytes, FPS\,=\,10.0, no active movement command
+             (\texttt{Move: ???}), and protocol label \texttt{Protocolo: TCP}.
+             The terminal confirms the successful connection:
+             \texttt{python3 tcp\_client\_viewer.py -ip 10.50.33.6},
+             parameters \texttt{w=1280 h=720 q=70 fps=10},
+             and \texttt{Conectado a 10.50.33.6:5000}.}
+    \label{fig:client_snapshot}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{client_terminal_tcp.png}
+    \caption{Python TCP client during an active \texttt{move=S} command. The
+             overlay shows frame size 23\,418 bytes, FPS\,=\,10.1, and
+             \texttt{Move: S}, causing the cube to move away from the camera
+             (visible as a small white square near the horizon). The second
+             terminal window demonstrates the \textbf{auto-reconnect} feature:
+             after a disconnection (\texttt{Errno\,104 -- Connection reset by
+             remote host}), the client automatically reconnects within 2
+             seconds (\texttt{Conectado a 10.50.33.6:5000}).}
+    \label{fig:client_terminal}
+\end{figure}
+
+\subsection{Observed Metrics}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Notes} \\
+\midrule
+Resolution          & 1280 $\times$ 720 px & HD -- not possible reliably over UDP \\
+JPEG quality        & 70               & Configurable via request string \\
+Target FPS          & 10               & Server-side pacing \\
+Measured FPS        & 10.0             & Stable over Wi-Fi LAN \\
+Transport protocol  & TCP              & Persistent connection, no frame loss \\
+Server IP           & 10.50.33.6       & Windows\,11, Wi-Fi \texttt{central.local} \\
+Client IP           & 10.50.33.4       & Ubuntu, Lenovo ThinkPad \\
+Movement commands   & W / A / S / D / 0 & Reset each frame, no drift \\
+\bottomrule
+\end{tabular}
+\caption{System performance metrics during the LAN test.}
+\end{table}
+
+% ═══════════════════════════════════════════════════════════════════════════════
+\section{Conclusions}
+
+Migrating from UDP to TCP resolves the key limitations encountered in the previous
+laboratory session while preserving the same parametric interface and WASD control:
+
+\begin{itemize}
+    \item \textbf{No size limit:} 1280$\times$720 JPEG frames are transmitted reliably
+          without any IP fragmentation risk.
+    \item \textbf{No silent frame loss:} TCP's retransmission mechanism guarantees
+          every frame reaches the client, which is critical for a control application.
+    \item \textbf{Multi-client support:} each accepted connection spawns an independent
+          \texttt{Task}, allowing multiple Python clients to receive the stream
+          simultaneously.
+    \item \textbf{Auto-reconnect:} the Python client detects disconnection and
+          re-establishes the TCP session automatically.
+    \item \textbf{Manual framing required:} the 4-byte length prefix adds a small
+          implementation overhead not present in UDP, but is a standard pattern for
+          TCP message-oriented protocols.
+\end{itemize}
+
+\subsection{Future Extensions}
+
+\begin{description}
+    \item[Adaptive quality] Dynamically adjust JPEG quality based on measured RTT to
+    balance image quality and latency.
+    \item[WebSocket transport] Replace raw TCP with WebSockets for browser-based
+    clients without a Python dependency.
+    \item[H.264 / MPEG streaming] Replace per-frame JPEG with a video codec for
+    significantly better compression at high frame rates.
+\end{description}
+
+% ── Bibliography ─────────────────────────────────────────────────────────────
+\begin{thebibliography}{9}
+
+\bibitem{unity_docs}
+Unity Technologies, \textit{Unity Documentation -- Coroutines}, 2024.
+\url{https://docs.unity3d.com/Manual/Coroutines.html}
+
+\bibitem{msdn_tcp}
+Microsoft, \textit{TcpListener Class -- .NET API Reference}, 2024.
+\url{https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.tcplistener}
+
+\bibitem{msdn_networkstream}
+Microsoft, \textit{NetworkStream Class -- .NET API Reference}, 2024.
+\url{https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.networkstream}
+
+\bibitem{opencv_python}
+OpenCV Team, \textit{OpenCV-Python Tutorials}, 2024.
+\url{https://docs.opencv.org/4.x/d6/d00/tutorial_py_root.html}
+
+\bibitem{tutorial}
+R. Marín Prades, \textit{Tutorial JPEG Capture in Unity and UDP Communication
+for Remote Control}, February 2026.
+
+\end{thebibliography}
+
+\end{document}
